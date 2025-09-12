@@ -1,4 +1,4 @@
-# BANDGAP-LLM
+# VASPilot
 
 A multi-fidelity bandgap predictor powered by LLM.
 
