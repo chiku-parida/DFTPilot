@@ -81,4 +81,4 @@ $ python /scripts/batch_predict.py \
 
 # Contributors:
 - Chiku Parida (cparida.ai@gmail.com)
-- Savya Agarwala
+- Savya Agarwala (savya10@gmail.com)
