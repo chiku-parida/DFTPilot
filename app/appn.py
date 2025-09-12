@@ -185,7 +185,7 @@ async def api_predict(
     neighbors: List[Dict[str, Any]] = []
     if rag is not None:
         try:
-            neighbors = rag.query(s, k=8, level_filter=chosen_level)
+            neighbors = rag.query(s, k=5, level_filter=chosen_level)
             for n in neighbors:
                 calc_dir = n.get("calc_dir", "")
                 struct_obj = None
