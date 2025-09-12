@@ -1,0 +1,88 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>BandGap-LLM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-4">BandGap-LLM</h1>
+    <p class="text-sm text-slate-600 mb-6">Upload a POSCAR/CIF, pick a target level, optionally provide extras (INCAR-like JSON), and get the predicted band gap.</p>
+
+    <!-- Error -->
+    {% if error %}
+      <div class="mb-4 p-3 rounded bg-red-100 text-red-900 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <!-- Form -->
+    <form class="space-y-4 bg-white rounded-xl shadow p-5" action="/predict" method="post" enctype="multipart/form-data">
+      <div>
+        <label class="block text-sm font-medium mb-1">Structure file (POSCAR or CIF)</label>
+        <input type="file" name="structure" required
+               class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-800 file:text-white hover:file:bg-slate-700"/>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">Target level of theory</label>
+        <select name="target_level" class="w-full border rounded-lg p-2 text-sm">
+          {% for lvl in levels %}
+            <option value="{{ lvl }}">{{ lvl }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">Extras (optional JSON or KEY=VAL lines)</label>
+        <textarea name="extras" rows="4" placeholder='{"ENCUT": 520, "ISMEAR": 0}' class="w-full border rounded-lg p-2 text-sm"></textarea>
+      </div>
+
+      <div class="pt-2">
+        <button class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">Predict</button>
+      </div>
+    </form>
+
+    {% if prediction %}
+      <div class="mt-8 bg-white rounded-xl shadow p-5">
+        <h2 class="text-xl font-semibold mb-3">Prediction</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <div><span class="font-medium">Target level:</span> {{ prediction.target_level }}</div>
+          <div><span class="font-medium">Predicted band gap:</span> {{ "%.4f"|format(prediction.bandgap_eV) }} eV</div>
+        </div>
+
+        <h3 class="text-lg font-semibold mt-6 mb-2">Nearest Neighbors (RAG)</h3>
+        {% if prediction.neighbors and prediction.neighbors|length > 0 %}
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left bg-slate-100">
+                  <th class="px-3 py-2">Similarity</th>
+                  <th class="px-3 py-2">Band gap (eV)</th>
+                  <th class="px-3 py-2">Level</th>
+                  <th class="px-3 py-2">Direct?</th>
+                  <th class="px-3 py-2">Calc dir</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for n in prediction.neighbors %}
+                  <tr class="border-t">
+                    <td class="px-3 py-2">{{ "%.3f"|format(n.similarity) }}</td>
+                    <td class="px-3 py-2">{{ "%.4f"|format(n.bandgap_eV) }}</td>
+                    <td class="px-3 py-2">{{ n.level_of_theory }}</td>
+                    <td class="px-3 py-2">{{ "Yes" if n.is_direct else "No" }}</td>
+                    <td class="px-3 py-2 truncate">{{ n.calc_dir }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-slate-600 text-sm">No neighbors found or RAG disabled.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>

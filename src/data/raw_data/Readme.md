@@ -1,0 +1,1 @@
+## Raw VASP calculation data for bandgap prediction

@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH --job-name=PbTe_35
+#SBATCH --get-user-env
+#SBATCH --output=vasp_out_%j
+#SBATCH --error=stderr_%j.txt
+#SBATCH --nodes=2
+#SBATCH --tasks-per-node=128
+#SBATCH --cpus-per-task=1
+#SBATCH --time=10:00:00
+#SBATCH --account=e05-power-dos
+#SBATCH --partition=standard
+#SBATCH --qos=standard
+
+# Set the number of threads to 1
+#   This prevents any threaded system libraries from automatically
+#   using threading.
+export OMP_NUM_THREADS=1
+
+module load vasp/6/6.3.2
+# Most efficient options for VASP
+'srun' '--cpu-bind=rank' '--hint=nomultithread' '--distribution=block:block' 'vasp_ncl'
+#if need to run locally loaded vasp, hash out the module load, and replace 'vasp_gam' with the path to the local vasp.

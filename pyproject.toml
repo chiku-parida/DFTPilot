@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools", "setuptools-git-versioning"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bg_llm"
+description = "A multi-fedility bandgap predictor powered by LLM."
+authors = [{name = "Chiku Parida", email = "cparida.ai@gmail.com"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+dynamic = ["version"]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==1.26.4",
+    "ase>=3.22.1",
+    "torch>=2.3.0",
+    "scikit-learn",
+    "pandas",
+    "lightning>=2.2.0",
+    "jsonargparse[signatures]>=4.27.5",
+    "tqdm",
+    "pydantic",
+    "fastapi",
+    "uvicorn[standard]",
+    "pymatgen",
+    "spglib",
+    "monty",
+    "faiss-cpu",
+    "dscribe",
+    "sentence-transformers==2.7.0",
+
+]
+
+[project.optional-dependencies]
+tensorboard = ["protobuf==4.25", "tensorboard>=2.15.1"]
+wandb = ["wandb>=0.17.4"]
+all = ["bg_llm[tensorboard,wandb]"]
+lint = ["mypy>=1.15.0", "ruff>=0.9.6"]
+dev = ["bg_llm[all,lint]"]
+
+[tool.setuptools.package-data]
+"bg_llm" = ["py.typed"]
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = [
+    "F",   # pyflakes
+    "E",   # pycodestyle
+    "W",   # pycodestyle
+    "I",   # isort
+    "ANN", # flake8 type annotations
+    "RUF", # ruff-specific rules
+]
+ignore = ["I001"]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = [
+    "ANN001", # Missing type for function argument
+    "ANN201", # Missing return type for public function
+    "ANN202", # Missing return type for private function
+]
+"tests/*" = [
+    "ANN201", # Missing return type for public function
+]
+
+[tool.mypy]
+python_version = "3.11"

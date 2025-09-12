@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>BandGap-LLM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 3Dmol.js for visualization -->
+  <script src="https://3dmol.org/build/3Dmol-min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-3xl font-bold">BandGap-LLM</h1>
+      <p class="text-sm text-slate-600 mt-1">
+        Upload a POSCAR or CIF; choose a level or select <b>AUTO</b> and provide an INCAR to infer it.
+      </p>
+    </header>
+
+    {% if error %}
+      <div class="mb-4 p-3 rounded bg-red-100 text-red-900 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <!-- Form -->
+    <form class="space-y-4 bg-white rounded-xl shadow p-5" action="/predict" method="post" enctype="multipart/form-data">
+      <div>
+        <label class="block text-sm font-medium mb-1">Structure file (POSCAR or CIF)</label>
+        <input type="file" name="structure" required
+               class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-800 file:text-white hover:file:bg-slate-700"/>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Target level of theory</label>
+          <select name="target_level" class="w-full border rounded-lg p-2 text-sm">
+            {% for lvl in levels %}
+              <option value="{{ lvl }}">{{ lvl }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Pick <b>AUTO (infer from INCAR)</b> and attach an INCAR file.</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">INCAR (optional; used when AUTO)</label>
+          <input type="file" name="incar"
+                 class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-800 file:text-white hover:file:bg-slate-700"/>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">Extras (optional JSON or KEY=VAL lines)</label>
+        <textarea name="extras" rows="4" placeholder='{"ENCUT": 520, "ISMEAR": 0}' class="w-full border rounded-lg p-2 text-sm"></textarea>
+      </div>
+
+      <div class="pt-2">
+        <button class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500">Predict</button>
+      </div>
+    </form>
+
+    {% if prediction %}
+      <section class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Prediction + Neighbors -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <h2 class="text-xl font-semibold mb-3">Prediction</h2>
+          <div class="space-y-2 text-sm">
+            <div>
+              <span class="font-medium">Target level:</span>
+              {{ prediction.target_level }}
+              {% if prediction.inferred_from_incar %}
+                <span class="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">inferred from INCAR</span>
+              {% elif prediction.source == 'auto_no_incar' %}
+                <span class="ml-2 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">AUTO fallback (PBE)</span>
+              {% endif %}
+            </div>
+            <div>
+              <span class="font-medium">Predicted band gap:</span>
+              {{ "%.4f"|format(prediction.bandgap_eV) }} eV
+            </div>
+          </div>
+
+          <h3 class="text-lg font-semibold mt-6 mb-2">Nearest Neighbors (RAG)</h3>
+          {% if prediction.neighbors and prediction.neighbors|length > 0 %}
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead>
+                  <tr class="text-left bg-slate-100">
+                    <th class="px-3 py-2">Similarity</th>
+                    <th class="px-3 py-2">INCAR Similarity</th>
+                    <th class="px-3 py-2">Formula</th>
+                    <th class="px-3 py-2">Band gap (eV)</th>
+                    <th class="px-3 py-2">Level</th>
+                    <th class="px-3 py-2">Direct?</th>
+                    <th class="px-3 py-2">Calc dir</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for n in prediction.neighbors %}
+                    <tr class="border-t">
+                      <td class="px-3 py-2">{{ "%.3f"|format(n.similarity) }}</td>
+                      <td class="px-3 py-2">
+                      {% if n.incar_similarity is none %}-{% else %}{{ "Yes" if n.incar_similarity else "No" }}{% endif %}
+                      </td>
+                      <td class="px-3 py-2">{{ n.formula or "N/A" }}</td>
+                      <td class="px-3 py-2">{{ "%.4f"|format(n.bandgap_eV) }}</td>
+                      <td class="px-3 py-2">{{ n.level_of_theory }}</td>
+                      <td class="px-3 py-2">{{ "Yes" if n.is_direct else "No" }}</td>
+                      <td class="px-3 py-2 truncate">{{ n.calc_dir }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-slate-600 text-sm">No neighbors found or RAG disabled.</p>
+          {% endif %}
+        </div>
+
+        <!-- Structure Viewer -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <h2 class="text-xl font-semibold mb-4">Structure Viewer</h2>
+
+          <!-- Controls -->
+          <div class="flex flex-wrap items-end gap-3 mb-3 text-sm">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">Style</label>
+              <select id="styleSel" class="border rounded-lg p-2">
+                <option value="ballstick">Ball &amp; Stick</option>
+                <option value="stick">Stick</option>
+                <option value="spacefill">Spacefill</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">Sphere scale</label>
+              <input id="sphereScale" type="range" min="0.2" max="1.0" step="0.05" value="0.45" class="w-40">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">Bond radius</label>
+              <input id="bondRadius" type="range" min="0.05" max="0.4" step="0.01" value="0.15" class="w-40">
+            </div>
+            <label class="inline-flex items-center gap-2">
+              <input id="toggleCell" type="checkbox" class="rounded" checked>
+              <span>Show unit cell</span>
+            </label>
+            <label class="inline-flex items-center gap-2">
+              <input id="toggleAxes" type="checkbox" class="rounded">
+              <span>Show axes</span>
+            </label>
+            <label class="inline-flex items-center gap-2">
+              <input id="toggleSpin" type="checkbox" class="rounded">
+              <span>Spin</span>
+            </label>
+            <button id="resetView" class="ml-auto px-3 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700">
+              Reset view
+            </button>
+          </div>
+
+          <!-- Viewer + tiny error console -->
+          <div id="viewer" style="width: 100%; height: 520px; position: relative; border-radius: 0.75rem; overflow: hidden;"></div>
+          <pre id="viewerLog" class="text-xs text-red-700 mt-2 whitespace-pre-wrap"></pre>
+
+          <script>
+            document.addEventListener("DOMContentLoaded", function () {
+              const logEl = document.getElementById("viewerLog");
+              const log = (m) => { if (logEl) logEl.textContent = String(m || ""); };
+
+              if (typeof $3Dmol === "undefined") {
+                log("3Dmol.js not loaded (check the <script src='https://3dmol.org/build/3Dmol-min.js'> tag).");
+                return;
+              }
+
+              // Prefer CIF, keep POSCAR fallback
+              const cif    = {{ prediction.structure_cif    | tojson | safe }};
+              const poscar = {{ prediction.structure_poscar | tojson | safe }};
+
+              if ((!cif || !cif.trim()) && (!poscar || !poscar.trim())) {
+                log("No structure text received from backend.");
+                return;
+              }
+
+              const el = document.getElementById("viewer");
+              const viewer = $3Dmol.createViewer(el, { backgroundColor: "white", antialias: true });
+
+              let model = null;
+
+              // Try CIF
+              try {
+                if (cif && cif.trim()) {
+                  model = viewer.addModel(cif, "cif");
+                }
+              } catch (e) {
+                log("CIF parse failed, trying POSCAR/VASP… (" + e + ")");
+              }
+
+              // Fallback to VASP POSCAR
+              if (!model && poscar && poscar.trim()) {
+                try {
+                  model = viewer.addModel(poscar, "vasp");
+                  log(""); // clear any warning
+                } catch (e2) {
+                  log("Failed to parse POSCAR/VASP: " + e2);
+                  return;
+                }
+              }
+
+              if (!model) {
+                log("Could not load model with CIF or POSCAR.");
+                return;
+              }
+
+              const state = {
+                style: "ballstick",
+                sphereScale: 0.45,
+                bondRadius: 0.15,
+                showCell: true,
+                showAxes: false,
+                spinning: false,
+              };
+
+              function applyStyle() {
+                viewer.setStyle({}, {});
+                if (state.style === "ballstick") {
+                  viewer.setStyle({}, { sphere: { scale: state.sphereScale }, stick: { radius: state.bondRadius } });
+                } else if (state.style === "stick") {
+                  viewer.setStyle({}, { stick: { radius: state.bondRadius } });
+                } else if (state.style === "spacefill") {
+                  viewer.setStyle({}, { sphere: { scale: state.sphereScale } });
+                }
+              }
+
+              function applyOverlays() {
+                viewer.removeAllShapes();
+                viewer.removeAllLabels();
+
+                if (state.showCell) {
+                  try {
+                    viewer.addUnitCell(model); // works for CIF & VASP if cell present
+                  } catch (e) {
+                    console.warn("Unit cell not available:", e);
+                  }
+                }
+
+                if (state.showAxes) {
+                  const bb = viewer.getModel().getBounds();
+                  const L = Math.max(bb.range.x, bb.range.y, bb.range.z) * 0.35 || 1.0;
+                  const c = { x: bb.mid.x, y: bb.mid.y, z: bb.mid.z };
+                  viewer.addArrow({ start: c, end: { x: c.x + L, y: c.y, z: c.z }, radius: 0.1, fromCap: 1, toCap: 2, color: "red"  });
+                  viewer.addArrow({ start: c, end: { x: c.x, y: c.y + L, z: c.z }, radius: 0.1, fromCap: 1, toCap: 2, color: "green"});
+                  viewer.addArrow({ start: c, end: { x: c.x, y: c.y, z: c.z + L }, radius: 0.1, fromCap: 1, toCap: 2, color: "blue" });
+                  viewer.addLabel("a", { position: { x: c.x + L*1.05, y: c.y, z: c.z }, fontSize: 10, fontColor: "red" });
+                  viewer.addLabel("b", { position: { x: c.x, y: c.y + L*1.05, z: c.z }, fontSize: 10, fontColor: "green" });
+                  viewer.addLabel("c", { position: { x: c.x, y: c.y, z: c.z + L*1.05 }, fontSize: 10, fontColor: "blue" });
+                }
+              }
+
+              function renderAll(zoom) {
+                applyStyle();
+                applyOverlays();
+                if (zoom) viewer.zoomTo();
+                viewer.render();
+                viewer.resize();
+              }
+
+              // Initial render
+              renderAll(true);
+
+              // Controls
+              const styleSel    = document.getElementById("styleSel");
+              const sphereScale = document.getElementById("sphereScale");
+              const bondRadius  = document.getElementById("bondRadius");
+              const toggleCell  = document.getElementById("toggleCell");
+              const toggleAxes  = document.getElementById("toggleAxes");
+              const toggleSpin  = document.getElementById("toggleSpin");
+              const resetView   = document.getElementById("resetView");
+
+              styleSel.addEventListener("change", () => { state.style = styleSel.value; renderAll(false); });
+              sphereScale.addEventListener("input", () => { state.sphereScale = parseFloat(sphereScale.value); renderAll(false); });
+              bondRadius.addEventListener("input", () => { state.bondRadius = parseFloat(bondRadius.value); renderAll(false); });
+              toggleCell.addEventListener("change", () => { state.showCell = toggleCell.checked; renderAll(false); });
+              toggleAxes.addEventListener("change", () => { state.showAxes = toggleAxes.checked; renderAll(false); });
+
+              // Spin
+              let spinHandle = null;
+              function startSpin() {
+                if (spinHandle) return;
+                spinHandle = setInterval(() => {
+                  viewer.rotate(1, "y");
+                  viewer.render();
+                }, 30);
+              }
+              function stopSpin() {
+                if (spinHandle) { clearInterval(spinHandle); spinHandle = null; }
+              }
+              toggleSpin.addEventListener("change", () => {
+                if (toggleSpin.checked) startSpin(); else stopSpin();
+              });
+
+              resetView.addEventListener("click", (e) => {
+                e.preventDefault();
+                viewer.zoomTo();
+                viewer.render();
+              });
+
+              window.addEventListener("resize", () => viewer.resize());
+            });
+          </script>
+        </div>
+      </section>
+    {% endif %}
+  </div>
+</body>
+</html>
