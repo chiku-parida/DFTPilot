@@ -8,8 +8,8 @@ A multi-fidelity bandgap predictor powered by LLM.
 It is recommended to first create and activate a virtual environment.
 
 ```
-$ conda create -n bg-llm python=3.11
-$ conda activate bg-llm
+$ conda create -n vaspilot python=3.11
+$ conda activate vaspilot
 ```
 
 Then install the package with all dependencies:
@@ -77,6 +77,7 @@ $ python /scripts/batch_predict.py \
 # App:
 
 ```
+$ cd app/
 $ uvicorn app:app --reload --port 8000
 ```
 Then open your browser and go to [`http://127.0.0.1:8000`](http://127.0.0.1:8000)
