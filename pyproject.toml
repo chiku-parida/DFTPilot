@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-git-versioning"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bg_llm"
+name = "VASPilot"
 description = "A multi-fedility bandgap predictor powered by LLM."
 authors = [{name = "Chiku Parida", email = "cparida.ai@gmail.com"}]
 readme = "README.md"
@@ -34,12 +34,12 @@ dependencies = [
 [project.optional-dependencies]
 tensorboard = ["protobuf==4.25", "tensorboard>=2.15.1"]
 wandb = ["wandb>=0.17.4"]
-all = ["bg_llm[tensorboard,wandb]"]
+all = ["VASPilot[tensorboard,wandb]"]
 lint = ["mypy>=1.15.0", "ruff>=0.9.6"]
-dev = ["bg_llm[all,lint]"]
+dev = ["VASPilot[all,lint]"]
 
 [tool.setuptools.package-data]
-"bg_llm" = ["py.typed"]
+"VASPilot" = ["py.typed"]
 
 [tool.setuptools-git-versioning]
 enabled = true
