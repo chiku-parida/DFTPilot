@@ -74,6 +74,14 @@ $ python /scripts/batch_predict.py \
   --device cuda \
   --k 8
 ``` 
+# App:
+
+```
+$ uvicorn app:app --reload --port 8000
+```
+Then open your browser and go to [`http://127.0.0.1:8000`](http://127.0.0.1:8000)
+
+Now you can upload a POSCAR file and select the fidelity level to get the bandgap prediction.
 
 
 
