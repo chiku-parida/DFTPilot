@@ -90,4 +90,5 @@ Now you can upload a POSCAR file and select the fidelity level to get the bandga
 
 # Contributors:
 - Chiku Parida (cparida.ai@gmail.com)
-- Savya Agarwala (savya10@gmail.com)
+- Savyasanchi Aggarwal (savya10@gmail.com)
+- Diptendu Roy (diptendu.roy.1996@gmail.coms)
