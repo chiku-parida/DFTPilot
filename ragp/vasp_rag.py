@@ -10,10 +10,10 @@ import traceback
 # Setup
 
 app = FastAPI()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) # ensure your key is set in environment
+client = OpenAI(api_key="give your api key here")
 
-FAISS_INDEX_FILE = "faiss.index"
-TEXT_STORE_FILE = "texts.npy"
+FAISS_INDEX_FILE = "/ragp/faiss.index"
+TEXT_STORE_FILE = "/ragp/texts.npy"
 
 # Maximum characters to send for embedding (≈ safe for 8k tokens)
 MAX_CHARS = 20000
