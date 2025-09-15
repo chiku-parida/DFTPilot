@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Dict
 from sentence_transformers import SentenceTransformer
 import numpy as np, torch
-
-_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", use_auth_token="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")  # small but strong
+hf_token="your-hf-token"
+_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", use_auth_token=hf_token)  # small but strong
 _DIM = _MODEL.get_sentence_embedding_dimension()
 
 def lot_prompt(target_level:str, extras:Dict[str,str|float|int]|None=None)->str:

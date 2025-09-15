@@ -1,203 +1,206 @@
 import os
-import faiss
+import json
 import numpy as np
-from fastapi import FastAPI, UploadFile, Form
-from fastapi.responses import JSONResponse
+import faiss
+from pathlib import Path
+from typing import Dict, Any, List
+from sentence_transformers import SentenceTransformer
 from openai import OpenAI
-import traceback
-
-
-# Setup
-
-app = FastAPI()
-client = OpenAI(api_key="give your api key here")
-
-FAISS_INDEX_FILE = "/ragp/faiss.index"
-TEXT_STORE_FILE = "/ragp/texts.npy"
-
-# Maximum characters to send for embedding (≈ safe for 8k tokens)
-MAX_CHARS = 20000
+from flask import Flask, request, jsonify, render_template_string
 
 
 
-# Embedding
-
-def embed_text(text: str) -> np.ndarray:
-    text = text[:MAX_CHARS]  # truncate to avoid exceeding model max tokens
-    try:
-        resp = client.embeddings.create(
-            model="text-embedding-3-large",
-            input=text
-        )
-        return np.array(resp.data[0].embedding, dtype="float32")
-    except Exception as e:
-        raise RuntimeError(f"Embedding generation failed: {e}")
+# --- Configuration ---
+OPENAI_API_KEY = "your_openai_api_key"
+HF_TOKEN = os.getenv("your_hugging_face_token")  # optional
+DB_DIRECTORY = Path("path/to/ragp/faiss_db/")
 
 
-
-# FAISS helpers
-
-def build_faiss_index(texts):
-    embeddings = [embed_text(t) for t in texts]
-    dim = len(embeddings[0])
-    index = faiss.IndexFlatL2(dim)
-    index.add(np.array(embeddings))
-    faiss.write_index(index, FAISS_INDEX_FILE)
-    np.save(TEXT_STORE_FILE, np.array(texts))
-    return index, texts
+app = Flask(__name__)
 
 
-def load_faiss_index():
-    if not os.path.exists(FAISS_INDEX_FILE) or not os.path.exists(TEXT_STORE_FILE):
-        return None, None
-    index = faiss.read_index(FAISS_INDEX_FILE)
-    texts = np.load(TEXT_STORE_FILE, allow_pickle=True).tolist()
-    return index, texts
-
-
-def retrieve_similar(query_text, index, texts, k=3):
-    try:
-        query_emb = embed_text(query_text).reshape(1, -1)
-        D, I = index.search(query_emb, k)
-        results = []
-        for idx in I[0]:
-            if idx < len(texts):
-                results.append(str(texts[idx]))  # always return string
-        return results
-    except Exception as e:
-        raise RuntimeError(f"Retrieval failed: {e}")
+try:
+    FAISS_INDEX = faiss.read_index(str(DB_DIRECTORY / "vasp_index.faiss"))
+    with open(DB_DIRECTORY / "vasp_metadata.json", "r") as f:
+        METADATA = json.load(f)
+    print("FAISS index loaded successfully.")
+    EMBEDDING_MODEL = SentenceTransformer(
+        'all-MiniLM-L6-v2', token=HF_TOKEN
+    ) if HF_TOKEN else SentenceTransformer('all-MiniLM-L6-v2')
+except Exception as e:
+    print(f"Error loading FAISS index or metadata: {e}")
+    FAISS_INDEX = None
+    METADATA = []
+    EMBEDDING_MODEL = None
 
 
 
-# INCAR generation with comma-separated text output
+def assess_convergence(incar_text: str, outcar_text: str) -> str:
+    """Give qualitative convergence preview instead of numeric forces."""
+    import re
+    def find(param):
+        m = re.search(rf"\b{param}\s*=\s*([^\s#]+)", incar_text, flags=re.I)
+        return m.group(1) if m else None
 
-def prettify_incar(text: str) -> str:
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    return ", ".join(lines)
+    encut = find("ENCUT")
+    ediff = find("EDIFF")
+    ediffg = find("EDIFFG")
+    algo = find("ALGO")
+
+    reached_elec = re.search(r"reached required accuracy.*stopping electronic", outcar_text, flags=re.I)
+    reached_ion = re.search(r"reached required accuracy.*stopping structural", outcar_text, flags=re.I)
+
+    verdict = "Likely converged ✅" if reached_elec and reached_ion else \
+              "Potential issues ⚠️" if reached_elec else \
+              "Unlikely to converge ❌"
+
+    md = ["### Verdict", verdict, "", "### Why"]
+    if encut: md.append(f"- ENCUT = {encut}")
+    if ediff: md.append(f"- EDIFF = {ediff}")
+    if ediffg: md.append(f"- EDIFFG = {ediffg}")
+    if algo: md.append(f"- ALGO = {algo}")
+    if reached_elec: md.append("- Electronic convergence achieved")
+    if reached_ion: md.append("- Ionic convergence achieved")
+
+    md.append("")
+    md.append("### Quick Fixes")
+    if not reached_elec:
+        md.append("- Adjust EDIFF slightly to improve SCF convergence")
+    if not reached_ion:
+        md.append("- Check relaxation settings and EDIFFG")
+    if not encut or (encut.isdigit() and int(encut) < 450):
+        md.append("- Increase ENCUT by 10–20%")
+    if not algo or algo.upper() in {"FAST", "VERYFAST"}:
+        md.append("- Use ALGO=Normal for stability")
+
+    return "\n".join(md)
 
 
-def generate_incar(query_text, retrieved):
-    try:
-        context = "\n".join(retrieved)
+def generate_rag_prompt(user_query: str, retrieved_contexts: list) -> Dict[str, Any]:
+    """Structured prompt for concise Markdown output."""
+    context = "\n---\n".join(retrieved_contexts)
+    system_prompt = (
+        "You are an expert VASP assistant. ONLY use provided contexts.\n"
+        "Output must be concise Markdown:\n"
+        "## INCAR suggestion\n(fenced code block with minimal settings)\n"
+        "## Rationale\n(3–5 concise bullets)\n"
+        "## Expected convergence\n(qualitative notes)\n"
+        "Do NOT invent missing values."
+    )
+    user_prompt = (
+        f"Analyze this VASP case:\n{user_query}\n\n"
+        f"Similar contexts:\n{context}\n"
+        "Respond using the exact Markdown structure above."
+    )
+    return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
-        prompt = f"""
-You are an expert in VASP INCAR preparation.
-Based on the POSCAR/INCAR context below, suggest the correct INCAR parameters.
+def escape_html(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-Context:
-{context}
-
-Query:
-{query_text}
-
-Return your suggestion as plain text, one key=value per line.
-Do NOT return JSON, dictionaries, or Python syntax.
-Only return lines like:
-ENCUT = 520
-ISMEAR = 0
-SIGMA = 0.05
-EDIFF = 1E-5
+# HTML Template
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VASP RAG Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
+<div class="container mx-auto p-4">
+  <h1 class="text-3xl text-center font-bold text-teal-700 mb-4">VASP RAG Assistant</h1>
+  <main class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <form id="upload-form" class="space-y-3 bg-white p-4 rounded shadow">
+      <input type="file" name="incar" class="block w-full text-sm border p-2" />
+      <input type="file" name="poscar" class="block w-full text-sm border p-2" />
+      <textarea name="notes" placeholder="Notes (e.g., spin-polarized)" class="block w-full text-sm border p-2"></textarea>
+      <button id="submit-btn" class="bg-teal-600 text-white px-4 py-2 rounded w-full">Get Suggestions</button>
+      <div id="loading" class="hidden text-center mt-2">Analyzing...</div>
+    </form>
+    <div class="bg-white p-4 rounded shadow">
+      <div id="results-display">Suggestions will appear here.</div>
+    </div>
+  </main>
+</div>
+<script>
+document.getElementById('upload-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  const btn = document.getElementById('submit-btn');
+  const loading = document.getElementById('loading');
+  const results = document.getElementById('results-display');
+  btn.disabled = true; loading.classList.remove('hidden'); results.innerHTML = '';
+  try {
+    const resp = await fetch('/suggest', {method:'POST', body:formData});
+    const data = await resp.json();
+    const html = DOMPurify.sanitize(marked.parse(data.suggestions || ''));
+    results.innerHTML = html;
+  } catch(err){
+    results.textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    loading.classList.add('hidden');
+  }
+});
+</script>
+</body>
+</html>
 """
 
-        resp = client.chat.completions.create(
+
+@app.route("/", methods=["GET"])
+def home():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route("/suggest", methods=["POST"])
+def suggest():
+    if FAISS_INDEX is None or EMBEDDING_MODEL is None:
+        return jsonify({"error": "FAISS or embedding model not loaded"}), 500
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "Missing OPENAI_API_KEY"}), 500
+
+    try:
+        incar_text = request.files.get("incar").read().decode("utf-8", errors="replace") if request.files.get("incar") else ""
+        poscar_text = request.files.get("poscar").read().decode("utf-8", errors="replace") if request.files.get("poscar") else ""
+        notes = request.form.get("notes", "")
+        query_text = f"Notes:\\n{notes}\\n---\\nINCAR:\\n{incar_text}\\n---\\nPOSCAR:\\n{poscar_text}"
+
+        # Embed and search
+        query_embedding = EMBEDDING_MODEL.encode([query_text], convert_to_numpy=True, normalize_embeddings=True).astype('float32')
+        k = min(5, FAISS_INDEX.ntotal)
+        distances, indices = FAISS_INDEX.search(query_embedding, k)
+
+        retrieved_contexts = []
+        for idx in indices[0]:
+            if idx < 0 or idx >= len(METADATA): 
+                continue
+            doc = METADATA[idx]['data']
+            ctx = (
+                f"INCAR:\\n{doc.get('incar','')[:800]}\\n---\\n"
+                f"POSCAR:\\n{doc.get('poscar','')[:800]}\\n---\\n"
+                f"Convergence Assessment:\\n{assess_convergence(doc.get('incar',''), doc.get('outcar',''))}"
+            )
+            retrieved_contexts.append(ctx)
+
+        prompts = generate_rag_prompt(query_text, retrieved_contexts)
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for VASP input preparation."},
-                {"role": "user", "content": prompt}
+                {"role":"system","content":prompts["system_prompt"]},
+                {"role":"user","content":prompts["user_prompt"]}
             ],
-            temperature=0.2,
+            temperature=0.2
         )
-
-        raw_incar = resp.choices[0].message.content.strip()
-        return prettify_incar(raw_incar)
-
+        suggestions = response.choices[0].message.content
+        return jsonify({
+            "suggestions": suggestions,
+            "retrieved_contexts": [escape_html(c) for c in retrieved_contexts]
+        })
     except Exception as e:
-        return {"error": f"INCAR suggestion failed: {e}", "traceback": traceback.format_exc()}
+        return jsonify({"error": str(e)}), 500
 
-
-
-# OUTCAR preview with total energy and final forces
-
-def get_outcar_preview(outcar_text: str) -> str:
-    """
-    Extracts total energy and final forces from OUTCAR.
-    Returns a concise preview.
-    """
-    lines = outcar_text.strip().splitlines()
-    
-    # Find last total energy (TOTEN)
-    toten_lines = [l for l in lines if "free  energy   TOTEN" in l]
-    total_energy = toten_lines[-1].split()[-2] if toten_lines else "N/A"
-
-    # Extract last forces block (VASP TOTAL-FORCE section)
-    forces = []
-    start_idx = None
-    for i, line in enumerate(lines):
-        if "TOTAL-FORCE" in line or ("POSITION" in line and "TOTAL-FORCE" in line):
-            start_idx = i + 2  # skip header lines
-    if start_idx is not None:
-        for l in lines[start_idx:]:
-            if not l.strip():
-                break
-            parts = l.split()
-            if len(parts) >= 4:
-                atom_idx, fx, fy, fz = parts[:4]
-                forces.append(f"Atom {atom_idx}: fx={fx}, fy={fy}, fz={fz}")
-
-    preview = f"Total Energy (eV): {total_energy}\n"
-    preview += "Final Forces:\n" + ("\n".join(forces) if forces else "N/A")
-    return preview
-
-
-
-async def home():
-    return {"message": "VASP Assistant API is running. Use /suggest_incar endpoint."}
-
-
-@app.post("/suggest_incar")
-async def suggest_incar(
-    poscar_file: UploadFile = None,
-    incar_file: UploadFile = None,
-    outcar_file: UploadFile = None,
-    notes: str = Form(None),
-):
-    try:
-        # Read uploaded files
-        poscar_text = (await poscar_file.read()).decode("utf-8") if poscar_file else ""
-        incar_text = (await incar_file.read()).decode("utf-8") if incar_file else ""
-        outcar_text = (await outcar_file.read()).decode("utf-8") if outcar_file else ""
-
-        # OUTCAR preview
-        outcar_preview = get_outcar_preview(outcar_text) if outcar_text else ""
-
-        # Combine inputs and truncate
-        query_text = "\n".join([notes or "", poscar_text, incar_text, outcar_text])
-        query_text = query_text[:MAX_CHARS]
-
-        # Load or build FAISS index
-        index, texts = load_faiss_index()
-        if index is None:
-            train_texts = [
-                "Standard INCAR for relaxation: ENCUT=520, ISMEAR=0, SIGMA=0.05, EDIFF=1E-5",
-                "INCAR for static calculation: NSW=0, IBRION=-1, LREAL=Auto, PREC=Accurate",
-                "Spin-polarized INCAR: ISPIN=2, MAGMOM=5*1.0"
-            ]
-            index, texts = build_faiss_index(train_texts)
-
-        # Retrieve similar contexts
-        retrieved = retrieve_similar(query_text, index, texts)
-
-        # Generate INCAR suggestion
-        incar_suggestion = generate_incar(query_text, retrieved)
-
-        return {
-            "suggested_incar": incar_suggestion,
-            "retrieved_contexts": retrieved,
-            "outcar_preview": outcar_preview
-        }
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "traceback": traceback.format_exc()}
-        )
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
