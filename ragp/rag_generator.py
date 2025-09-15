@@ -8,9 +8,9 @@ from sentence_transformers import SentenceTransformer
 # Configuration
 # This script automatically finds the directory where it is located
 # and searches all its subdirectories for VASP data.
-data_directory = Path("path/to/data/train_final_raw/")#__file__).parent
+data_directory = Path("path/to/data/train_final_raw")#__file__).parent
 db_directory = Path("./faiss_db")
-hf_token = "your_huggingface_token_here"  # Replace with your actual Hugging Face token
+hf_token = "your-hf-token"  # Replace with your actual Hugging Face token
 # Ensure the database directory exists
 db_directory.mkdir(exist_ok=True)
 
