@@ -5,15 +5,24 @@ This is a specific instruction for input parameter suggestions and calculation o
 ```bash
 conda create -n ragp python=3.10 
 conda activate ragp
-pip install fastapi uvicorn openai faiss-cpu python-multipart
-```
-# Now run the FASTAPI server through uvicorn to interact with the RAG system on web interface
-```bash
-cd /path/to/ragp
-uvicorn vasp_rag:app --reload
+pip install fastapi uvicorn openai faiss-cpu python-multipart sentence-transformers Flask six
 ```
 
-## Open your browser and go to [http://127.0.0.1:8000](http://127.0.0.1:8000/docs)
+# Prepare RAG index for a new DFT data
+
+### Change the data directory in the rag_generator.py
+```bash
+python rag_generator.py
+```
+
+
+# Now run the Flask to interact with the RAG system on web interface
+```bash
+cd /path/to/ragp
+python vasp_rag.py
+```
+
+## Open your browser and go to [http://127.0.0.1:5000](http://127.0.0.1:5000)
 
 ## Note:
 1. Make sure to set your OpenAI API key in the environment variable `OPENAI_API_KEY`.
