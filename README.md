@@ -1,4 +1,4 @@
-# VASPilot
+# DFTPilot
 
 A multi-fidelity bandgap predictor powered by LLM.
 
@@ -8,8 +8,8 @@ A multi-fidelity bandgap predictor powered by LLM.
 It is recommended to first create and activate a virtual environment.
 
 ```
-$ conda create -n vaspilot python=3.11
-$ conda activate vaspilot
+$ conda create -n dftpilot python=3.11
+$ conda activate dftpilot
 ```
 
 Then install the package with all dependencies:
